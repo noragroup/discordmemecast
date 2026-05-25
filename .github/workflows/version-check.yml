@@ -1,0 +1,71 @@
+name: Notify Discord on Version Change
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        run: |
+          VERSION=$(cat version.txt | tr -d '\n' | tr -d '\r')
+          echo "VERSION=$VERSION"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Get Release Info
+        id: release
+        run: |
+
+          VERSION="${{ steps.version.outputs.version }}"
+
+          echo "Recherche release pour : $VERSION"
+
+          RESPONSE=$(curl -s \
+            https://api.github.com/repos/${{ github.repository }}/releases/tags/$VERSION)
+
+          MESSAGE=$(echo "$RESPONSE" | jq -r '.message')
+
+          # Si non trouvé → essaie avec v
+          if [ "$MESSAGE" = "Not Found" ]; then
+
+            echo "Pas trouvé, essai avec v$VERSION"
+
+            RESPONSE=$(curl -s \
+              https://api.github.com/repos/${{ github.repository }}/releases/tags/v$VERSION)
+          fi
+
+          echo "$RESPONSE"
+
+          BODY=$(echo "$RESPONSE" | jq -r '.body')
+          URL=$(echo "$RESPONSE" | jq -r '.html_url')
+
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          echo "$BODY" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          echo "url=$URL" >> $GITHUB_OUTPUT
+
+      - name: Send Discord Webhook
+        run: |
+
+          curl -H "Content-Type: application/json" \
+          -X POST \
+          -d "$(jq -n \
+            --arg version "${{ steps.version.outputs.version }}" \
+            --arg body "${{ steps.release.outputs.body }}" \
+            --arg url "${{ steps.release.outputs.url }}" \
+            '{
+              content:
+              ("🚀 Nouvelle version : **" + $version + "**\n\n"
+              + $body + "\n\n"
+              + $url)
+            }')" \
+          "${{ secrets.DISCORD_WEBHOOK }}"
